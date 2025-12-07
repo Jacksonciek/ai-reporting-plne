@@ -21,7 +21,7 @@ import {
   UploadCloud,
   XCircle,
 } from "lucide-react";
-import ChatbotExperience from "@/components/ChatbotExperience";
+import { useRouter } from "next/navigation";
 import { adminAuth, adminService } from "@/services/admin";
 import { OcrHistoryEntry, Transaction } from "@/types";
 
@@ -67,7 +67,9 @@ const formatBytes = (bytes: number) => {
 };
 
 export default function AdminPage() {
+  const router = useRouter();
   const [adminUser, setAdminUser] = useState(adminAuth.getUser());
+  const [hydrated, setHydrated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [form, setForm] = useState<Partial<Transaction>>(emptyForm);
@@ -83,12 +85,18 @@ export default function AdminPage() {
   }>({ stage: "idle", percent: 0 });
   const [ocrHistory, setOcrHistory] = useState<OcrHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const envAdminUsername = process.env.NEXT_PUBLIC_ADMIN_USERNAME || "";
   const envAdminPassword = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || "";
   const [loginPayload, setLoginPayload] = useState({ username: envAdminUsername, password: envAdminPassword });
   const [uploadTargetId, setUploadTargetId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   const sanitizeTransaction = (
     payload: Partial<Transaction>,
@@ -139,6 +147,10 @@ export default function AdminPage() {
     if (stage === "success") return "bg-emerald-400";
     return "bg-cyan-400";
   };
+
+  if (!hydrated) {
+    return null;
+  }
 
   const activeOcrStage = ocrProgress.stage === "failed" ? "processing" : ocrProgress.stage;
 
@@ -230,12 +242,11 @@ export default function AdminPage() {
     }
   };
 
-  const handleDelete = async (id: string | number) => {
-    const targetId = String(id);
-    if (typeof window !== "undefined") {
-      const confirmDelete = window.confirm(`Delete transaction #${targetId}?`);
-      if (!confirmDelete) return;
-    }
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const targetId = String(deleteTarget.id_transaksi);
+    setStatus(null);
+    setDeleteLoading(true);
     try {
       await adminService.deleteTransaction(targetId);
       setTransactions((prev) => prev.filter((item) => String(item.id_transaksi) !== targetId));
@@ -245,6 +256,9 @@ export default function AdminPage() {
         type: "error",
         message: error instanceof Error ? error.message : "Failed to delete transaction",
       });
+    } finally {
+      setDeleteLoading(false);
+      setDeleteTarget(null);
     }
   };
 
@@ -302,12 +316,14 @@ export default function AdminPage() {
         }
       );
 
-      const sanitized = sanitizeTransaction(result.transaction || {});
+      const records = result.transactions || [];
+      const firstRecord = records[0];
+      const sanitized = sanitizeTransaction(firstRecord || {});
       setForm((prev) => ({ ...prev, ...sanitized }));
       setTransactions((prev) => {
-        const trxId = String(result.transaction.id_transaksi);
-        const others = prev.filter((item) => String(item.id_transaksi) !== trxId);
-        return [result.transaction, ...others];
+        const incomingIds = new Set(records.map((item) => String(item.id_transaksi)));
+        const filteredPrev = prev.filter((item) => !incomingIds.has(String(item.id_transaksi)));
+        return [...records, ...filteredPrev];
       });
 
       if (result.history) {
@@ -324,6 +340,7 @@ export default function AdminPage() {
         message: "Document extracted successfully",
       });
       setOcrProgress({ stage: "success", percent: 100, message: "Document processed" });
+      setPendingFile(null);
     } catch (error) {
       setStatus({
         type: "error",
@@ -344,7 +361,6 @@ export default function AdminPage() {
     setAdminUser(null);
     setTransactions([]);
     setOcrHistory([]);
-    setChatOpen(false);
   };
 
   const heroGradient =
@@ -432,10 +448,9 @@ export default function AdminPage() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.4em] text-cyan-200/80">Admin Console</p>
-            <h1 className="text-3xl font-semibold text-white mt-2">Documents & OCR</h1>
+            <h1 className="text-3xl font-semibold text-white mt-2">OCR Data Intake</h1>
             <p className="text-slate-300 mt-1">
-              Manage PDF-sourced transaction data with LLM extraction. All changes are stored in database
-              <span className="font-semibold text-cyan-200"> u1792005_ai_reporting</span>.
+              Manage PDF-sourced transaction data with LLM extraction.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -449,7 +464,7 @@ export default function AdminPage() {
             <button
               onClick={() => {
                 adminAuth.ensureChatSession();
-                setChatOpen(true);
+                router.push("/admin/chatbot");
               }}
               className="inline-flex items-center gap-2 rounded-xl px-4 py-2 border border-emerald-300/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20 transition"
             >
@@ -535,30 +550,50 @@ export default function AdminPage() {
               </p>
 
               <div className="mt-4 space-y-3">
-                <div className="space-y-2">
-                  <label className="text-xs text-slate-300">Target transaction ID (optional)</label>
-                  <input
-                    value={uploadTargetId}
-                    onChange={(e) => setUploadTargetId(e.target.value)}
-                    placeholder="Leave blank to create a new record"
-                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
-                  />
-                </div>
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
                   className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-cyan-500/25 disabled:opacity-60"
                 >
                   <FileUp className="w-4 h-4" />
-                  {uploading ? "Processing..." : "Upload PDF & extract"}
+                  {uploading ? "Processing..." : "Upload PDF & extract automatically"}
                 </button>
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="application/pdf"
                   className="hidden"
-                  onChange={(e) => handleUpload(e.target.files?.[0] || null)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    setPendingFile(file);
+                    if (file) {
+                      setStatus({
+                        type: "success",
+                        message: `Ready to process: ${file.name}`,
+                      });
+                    }
+                  }}
                 />
+
+                {pendingFile && (
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
+                    <div className="flex items-center justify-between text-sm text-slate-200">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-cyan-300" />
+                        <span className="font-semibold truncate max-w-[200px]">{pendingFile.name}</span>
+                      </div>
+                      <span className="text-xs text-slate-400">{formatBytes(pendingFile.size)}</span>
+                    </div>
+                    <button
+                      disabled={uploading}
+                      onClick={() => handleUpload(pendingFile)}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-lg shadow-emerald-500/25 disabled:opacity-60"
+                    >
+                      {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      {uploading ? "Processing..." : "Process OCR"}
+                    </button>
+                  </div>
+                )}
 
                 {ocrProgress.stage !== "idle" && (
                   <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-3">
@@ -646,60 +681,62 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              {historyLoading ? (
-                <div className="flex items-center gap-2 text-slate-300">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Loading OCR history...</span>
-                </div>
-              ) : ocrHistory.length === 0 ? (
-                <p className="text-slate-300 text-sm">No PDF uploads yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {ocrHistory.slice(0, 5).map((item) => {
-                    const badge =
-                      item.status === "success"
-                        ? "bg-emerald-500/15 text-emerald-100 border-emerald-300/40"
-                        : item.status === "failed"
-                          ? "bg-rose-500/15 text-rose-100 border-rose-300/50"
-                          : "bg-cyan-500/10 text-cyan-100 border-cyan-300/40";
-                    return (
-                      <div
-                        key={`${item.id}-${item.filename}`}
-                        className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-2"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3">
-                            <FileText className="w-5 h-5 text-cyan-300" />
-                            <div>
-                              <p className="text-sm font-semibold text-white">{item.filename}</p>
-                              <p className="text-[11px] text-slate-400">
-                                {formatBytes(item.filesize_bytes)} | {item.page_count} pages
-                              </p>
+              <div className="rounded-2xl border border-white/10 bg-slate-900/30 p-3">
+                {historyLoading ? (
+                  <div className="flex items-center gap-2 text-slate-300">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Loading OCR history...</span>
+                  </div>
+                ) : ocrHistory.length === 0 ? (
+                  <p className="text-slate-300 text-sm">No PDF uploads yet.</p>
+                ) : (
+                  <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                    {ocrHistory.map((item) => {
+                      const badge =
+                        item.status === "success"
+                          ? "bg-emerald-500/15 text-emerald-100 border-emerald-300/40"
+                          : item.status === "failed"
+                            ? "bg-rose-500/15 text-rose-100 border-rose-300/50"
+                            : "bg-cyan-500/10 text-cyan-100 border-cyan-300/40";
+                      return (
+                        <div
+                          key={`${item.id}-${item.filename}`}
+                          className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-2"
+                        >
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <FileText className="w-5 h-5 text-cyan-300" />
+                              <div className="min-w-0 space-y-0.5">
+                                <p className="text-sm font-semibold text-white truncate">{item.filename}</p>
+                                <p className="text-[11px] text-slate-400 truncate">
+                                  {formatBytes(item.filesize_bytes)} | {item.page_count} pages
+                                </p>
+                              </div>
                             </div>
+                            <span className={`px-3 py-1 rounded-full text-[11px] border ${badge} shrink-0`}>
+                              {item.status === "processing" ? "processing" : item.status}
+                            </span>
                           </div>
-                          <span className={`px-3 py-1 rounded-full text-[11px] border ${badge}`}>
-                            {item.status === "processing" ? "processing" : item.status}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs text-slate-300">
-                          <span className="text-slate-400">Transaction ID</span>
-                          <span>{item.transaksi_id ?? "Waiting for persistence"}</span>
-                          <span className="text-slate-400">Message</span>
-                          <span>{item.message || "Processed successfully"}</span>
-                        </div>
-                        {item.fields_json && (
-                          <div className="text-[11px] text-slate-400 max-h-12 overflow-hidden">
-                            Sample fields:{" "}
-                            {["tanggal", "nama_produk", "total_penjualan", "konsumen"]
-                              .map((key) => `${key}: ${item.fields_json?.[key] ?? "-"}`)
-                              .join(" | ")}
+                          <div className="grid grid-cols-2 gap-2 text-xs text-slate-300">
+                            <span className="text-slate-400">Transaction ID</span>
+                            <span>{item.transaksi_id ?? "Waiting for persistence"}</span>
+                            <span className="text-slate-400">Message</span>
+                            <span>{item.message || "Processed successfully"}</span>
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                          {item.fields_json && (
+                            <div className="text-[11px] text-slate-400 max-h-12 overflow-hidden">
+                              Sample fields:{" "}
+                              {["tanggal", "nama_produk", "total_penjualan", "konsumen"]
+                                .map((key) => `${key}: ${item.fields_json?.[key] ?? "-"}`)
+                                .join(" | ")}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/40 p-3 flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-2 text-sm text-slate-200">
@@ -709,7 +746,7 @@ export default function AdminPage() {
                 <button
                   onClick={() => {
                     adminAuth.ensureChatSession();
-                    setChatOpen(true);
+                    router.push("/admin/chatbot");
                   }}
                   className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border border-emerald-300/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20 text-xs"
                 >
@@ -786,7 +823,10 @@ export default function AdminPage() {
                       </button>
                       <button
                         className="p-2 rounded-full bg-rose-500/10 hover:bg-rose-500/20 border border-rose-300/40"
-                        onClick={() => handleDelete(trx.id_transaksi)}
+                        onClick={() => {
+                          setStatus(null);
+                          setDeleteTarget(trx);
+                        }}
                         title="Delete"
                       >
                         <Trash2 className="w-4 h-4 text-rose-200" />
@@ -897,32 +937,75 @@ export default function AdminPage() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {chatOpen && (
+        {deleteTarget && (
           <motion.div
-            className="fixed inset-0 z-50"
+            className="fixed inset-0 z-50 flex items-center justify-center px-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
             <div
-              className="absolute inset-0 bg-slate-950/80 backdrop-blur-3xl"
-              onClick={() => setChatOpen(false)}
+              className="absolute inset-0 bg-slate-950/70 backdrop-blur-md"
+              onClick={() => {
+                if (!deleteLoading) setDeleteTarget(null);
+              }}
             />
-            <div className="absolute inset-3 lg:inset-10 rounded-3xl overflow-hidden border border-white/10 bg-slate-950">
-              <button
-                onClick={() => setChatOpen(false)}
-                className="absolute top-4 right-4 z-50 inline-flex items-center gap-2 rounded-xl px-3 py-2 bg-white/10 border border-white/20 text-sm text-white hover:bg-white/20"
-              >
-                <XCircle className="w-4 h-4" />
-                Close chatbot
-              </button>
-              <div className="h-full w-full">
-                <ChatbotExperience preferChatView />
+            <motion.div
+              className="relative w-full max-w-xl rounded-3xl border border-white/10 bg-slate-900/90 p-6 shadow-2xl shadow-rose-500/10"
+              initial={{ scale: 0.96, y: 12 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 12 }}
+            >
+              <div className="flex items-start gap-3">
+                <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-300/40">
+                  <Trash2 className="w-5 h-5 text-rose-200" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-rose-100">Delete transaction</p>
+                  <h3 className="text-xl font-semibold text-white">#{deleteTarget?.id_transaksi ?? "-"}</h3>
+                  <p className="text-xs text-slate-300">
+                    This action cannot be undone. The record will be removed permanently.
+                  </p>
+                </div>
               </div>
-            </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/60 p-4 text-sm text-slate-200 space-y-1">
+                <div className="font-semibold">{deleteTarget?.nama_produk || "Untitled transaction"}</div>
+                <div className="text-xs text-slate-400">
+                  {deleteTarget?.kota || "-"} | {deleteTarget?.tanggal || "No date"} | Total:{" "}
+                  {deleteTarget?.total_penjualan ?? "-"}
+                </div>
+                {deleteTarget?.salesperson && (
+                  <div className="text-xs text-slate-400">Salesperson: {deleteTarget.salesperson}</div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 mt-6">
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deleteLoading}
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 border border-white/10 bg-white/5 text-sm text-slate-100 hover:bg-white/10 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteLoading}
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-gradient-to-r from-rose-400 via-amber-400 to-orange-500 text-sm font-semibold text-slate-900 shadow-lg shadow-rose-500/20 disabled:opacity-60"
+                >
+                  {deleteLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                  {deleteLoading ? "Deleting..." : "Delete transaction"}
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
     </div>
   );
 }

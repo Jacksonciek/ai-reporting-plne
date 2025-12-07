@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import Link from "next/link";
 import {
   ChevronLeft,
@@ -24,6 +24,9 @@ interface SidebarProps {
   onNewChat: () => void;
   rooms: Room[];
   onRefreshRooms?: () => void;
+  footerHref?: string;
+  footerLabel?: string;
+  footerIcon?: ReactNode;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -34,6 +37,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNewChat,
   rooms: initialRooms,
   onRefreshRooms,
+  footerHref = "/dashboard",
+  footerLabel = "Dashboard",
+  footerIcon,
 }) => {
   const [rooms, setRooms] = useState<Room[]>(initialRooms);
   const [loading, setLoading] = useState(false);
@@ -229,14 +235,14 @@ const Sidebar: React.FC<SidebarProps> = ({
     >
       {/* Header */}
       <motion.div
-        className={`flex items-center justify-between ${isExpanded ? "p-4" : "px-2 py-3"} border-b border-slate-800/80 bg-slate-950/80`}
+        className={`${isExpanded ? "flex items-center justify-between p-4" : "flex items-center justify-center px-2 py-3"} border-b border-slate-800/80 bg-slate-950/80`}
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2, duration: 0.4 }}
       >
-        <div className="flex-1 flex items-center justify-center pointer-events-none">
-          <AnimatePresence initial={false}>
-            {isExpanded ? (
+        {isExpanded && (
+          <div className="flex-1 flex items-center justify-center pointer-events-none">
+            <AnimatePresence initial={false}>
               <motion.div
                 key="brand"
                 className="rounded-2xl px-4 py-2 bg-slate-800/80 border border-slate-700/70 text-slate-100 font-semibold tracking-tight"
@@ -257,23 +263,13 @@ const Sidebar: React.FC<SidebarProps> = ({
               >
                 AI Reporting
               </motion.div>
-            ) : (
-              <motion.div
-                key="brand-icon"
-                className="rounded-2xl px-3 py-2 bg-slate-800/80 border border-slate-700/70 text-slate-100 font-semibold"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-              >
-                AI
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+            </AnimatePresence>
+          </div>
+        )}
 
         <motion.button
           onClick={onToggle}
-          className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600 transition-all duration-300 shadow-sm ml-2 flex items-center justify-center shrink-0"
+          className={`p-2 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600 transition-all duration-300 shadow-sm flex items-center justify-center shrink-0 ${isExpanded ? "ml-2" : ""}`}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           aria-label={isExpanded ? "Collapse sidebar" : "Expand sidebar"}
@@ -575,15 +571,15 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* Footer */}
       <div className="border-t border-slate-800/80 bg-slate-950/90 px-3 py-4 flex flex-col items-center gap-2">
         <Link
-          href="/dashboard"
+          href={footerHref}
           className={`inline-flex items-center gap-2 rounded-xl w-full justify-center px-3 py-2 text-sm font-medium transition-all duration-200 ${
             isExpanded
               ? "bg-slate-800 border border-slate-700 text-slate-100 hover:bg-slate-700"
               : "bg-slate-800 border border-slate-700 text-slate-100"
           }`}
         >
-          <LayoutDashboard className="w-4 h-4" />
-          {isExpanded && <span>Dashboard</span>}
+          {footerIcon || <LayoutDashboard className="w-4 h-4" />}
+          {isExpanded && <span>{footerLabel}</span>}
         </Link>
         <SignOutButton
           compact={!isExpanded}

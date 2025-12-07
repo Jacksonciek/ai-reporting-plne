@@ -161,7 +161,7 @@ export const adminService = {
     file: File,
     targetId?: string,
     onProgress?: (payload: { percent: number; stage: 'uploading' | 'processing' | 'success' | 'failed' }) => void
-  ): Promise<{ transaction: Transaction; history?: OcrHistoryEntry | null }> {
+  ): Promise<{ transactions: Transaction[]; history?: OcrHistoryEntry | null }> {
     const formData = new FormData();
     formData.append('file', file);
     if (targetId) formData.append('id_transaksi', targetId);
@@ -184,7 +184,7 @@ export const adminService = {
     onProgress?.({ percent: 100, stage: 'processing' });
 
     const result = {
-      transaction: data?.data as Transaction,
+      transactions: (data?.data as Transaction[]) || [],
       history: (data?.history as OcrHistoryEntry) || null,
     };
 

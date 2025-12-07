@@ -2,6 +2,7 @@
 import base64
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -262,17 +263,57 @@ def extract_text_and_meta_from_pdf(file_bytes: bytes) -> tuple[str, int]:
         return "", page_count
 
 
-def _parse_json_like(text: str) -> dict:
-    try:
-        return json.loads(text)
-    except Exception:
+def _parse_json_like(text) -> dict:
+    """
+    Try to coerce a model response into a JSON object, even when wrapped in
+    Markdown fences or arrays.
+    """
+    if text is None:
+        return {}
+
+    # If already a dict/list from the model, return the first object
+    if isinstance(text, dict):
+        return text
+    if isinstance(text, list):
+        return text
+    if isinstance(text, (bytes, bytearray)):
         try:
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1:
-                return json.loads(text[start : end + 1])
+            text = text.decode("utf-8")
         except Exception:
-            return {}
+            text = str(text)
+
+    cleaned = text.strip()
+
+    def _return(parsed: object):
+        return parsed
+
+    # If text is already JSON-like
+    try:
+        return _return(json.loads(cleaned))
+    except Exception:
+        pass
+
+    # Look for fenced code blocks anywhere, not just the whole string
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, re.IGNORECASE)
+    if fence_match:
+        fenced = fence_match.group(1).strip()
+        try:
+            return _return(json.loads(fenced))
+        except Exception:
+            cleaned = fenced  # continue with other heuristics
+
+    # Try to pull the first JSON array or object from the text (prioritize arrays)
+    try:
+        array_match = re.search(r"\[[\s\S]*\]", cleaned)
+        if array_match:
+            return _return(json.loads(array_match.group(0)))
+
+        object_match = re.search(r"\{[\s\S]*\}", cleaned)
+        if object_match:
+            return _return(json.loads(object_match.group(0)))
+    except Exception:
+        return {}
+
     return {}
 
 
@@ -288,34 +329,43 @@ def extract_transaction_from_text(raw_text: str) -> dict:
         "Return JSON with exactly the following keys (only these should be populated): "
         f"{', '.join(TRANSACTION_MUTABLE_FIELDS)}. "
         "Include id_transaksi only if it is explicitly mentioned in the document as a reference, "
-        "and do not change any other key names. "
+        "and do not change any other key names. If the PDF contains multiple rows, pick the most complete single row "
+        "and only return that one object. Do not return arrays. "
         "Keep the field names unchanged. "
         "Fill in any string or numeric values you find; use null if the value is missing."
     )
 
     truncated = raw_text[:6000]
-    try:
-        response = model.invoke(
-            [
-                SystemMessage(content=system_prompt),
-                HumanMessage(
-                    content=(
-                        "Extract the transaction data from the following text. "
-                        "If any information is missing, simply set it to null.\n\n"
-                        f"{truncated}"
-                    )
-                ),
-            ]
-        )
-        content = (
-            response.content
-            if isinstance(response.content, str)
-            else json.dumps(response.content)
-        )
-    except Exception as exc:
-        print(f"[OCR] LLM extraction failed: {exc}")
-        return {}
+    messages = [
+        SystemMessage(
+            content=(
+                system_prompt
+                + " Respond with a single JSON object only (no code fences, no arrays, no extra text)."
+            )
+        ),
+        HumanMessage(
+            content=(
+                "Extract the transaction data from the following text. "
+                "If any information is missing, simply set it to null.\n\n"
+                f"{truncated}"
+            )
+        ),
+    ]
 
+    response = None
+    try:
+        # Prefer structured responses to reduce parsing failures
+        response = model.invoke(messages, response_format={"type": "json_object"})
+    except Exception as exc:
+        print(f"[OCR] Structured LLM extraction failed, retrying without enforced JSON: {exc}")
+        try:
+          response = model.invoke(messages)
+        except Exception as final_exc:
+            print(f"[OCR] LLM extraction failed: {final_exc}")
+            return {}
+
+    raw_content = response.content
+    content = raw_content if isinstance(raw_content, str) else raw_content
     parsed = _parse_json_like(content)
     if not parsed:
         print(f"[OCR] Could not parse LLM response: {content}")
@@ -839,20 +889,30 @@ def admin_upload_transaction():
         )
 
         llm_result = extract_transaction_from_text(raw_text)
-        payload = normalize_transaction_payload(llm_result or {})
 
-        target_id = request.form.get("id_transaksi") or (
-            llm_result.get("id_transaksi") if llm_result else None
-        )
-        persisted = None
-        if target_id and get_transaction(target_id):
-            persisted = update_transaction(target_id, payload)
-        else:
-            persisted = create_transaction(payload)
+        # Support multiple rows: normalize each record. Keep first for response/UI.
+        records = llm_result if isinstance(llm_result, list) else [llm_result]
+        persisted_records = []
+
+        target_id = request.form.get("id_transaksi")
+
+        for idx, rec in enumerate(records):
+            payload = normalize_transaction_payload(rec or {})
+
+            # Only attempt to update a specific id for the first record
+            use_target = target_id if idx == 0 else None
+            target_exists = use_target and get_transaction(use_target)
+            if use_target and target_exists:
+                persisted = update_transaction(use_target, payload)
+            else:
+                persisted = create_transaction(payload)
+            if persisted:
+                persisted_records.append(persisted)
 
         if history_id:
             try:
-                persisted_id = int(str(persisted.get("id_transaksi")))
+                persisted_first = persisted_records[0] if persisted_records else None
+                persisted_id = int(str(persisted_first.get("id_transaksi"))) if persisted_first else None
             except Exception:
                 persisted_id = None
             update_ocr_history(
@@ -860,7 +920,7 @@ def admin_upload_transaction():
                 "success",
                 transaksi_id=persisted_id,
                 message="Document extracted successfully",
-                fields=payload,
+                fields=persisted_first if persisted_first else (records[0] if records else {}),
                 ocr_preview=(raw_text or "")[:1200],
             )
 
@@ -869,7 +929,7 @@ def admin_upload_transaction():
                 {
                     "status_code": "ADM-000",
                     "message": "Document extracted successfully",
-                    "data": persisted,
+                    "data": persisted_records,
                     "history": get_ocr_history_entry(history_id) if history_id else None,
                 }
             ),

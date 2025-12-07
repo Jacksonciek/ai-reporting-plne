@@ -1,13 +1,13 @@
 import json
 import os
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
 
 import mysql.connector
-from mysql.connector import pooling
-from mysql.connector.connection_cext import CMySQLConnection
+from mysql.connector import MySQLConnection, pooling
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -48,18 +48,25 @@ DB_CONFIG = {
     "database": os.getenv("DB_NAME", "u1792005_ai_reporting"),
     "port": int(os.getenv("DB_PORT", "3306")),
     "auth_plugin": "mysql_native_password",
+    "use_pure": True,  # Force pure-Python connector to avoid missing C extension DLLs
 }
 
 _pool: Optional[pooling.MySQLConnectionPool] = None
 
 
-def _get_connection() -> CMySQLConnection:
+def _get_connection() -> MySQLConnection:
     """
     Return a pooled MySQL connection; fall back to a direct connection when pool fails.
     """
     global _pool
     if _pool is None:
-        _pool = pooling.MySQLConnectionPool(pool_name="trx_pool", pool_size=5, **DB_CONFIG)
+        # Force the pure-Python driver so we don't rely on the optional C extension,
+        # which is unavailable in some environments (e.g., Python 3.13 on Windows).
+        _pool = pooling.MySQLConnectionPool(
+            pool_name="trx_pool",
+            pool_size=5,
+            **DB_CONFIG,
+        )
     try:
         return _pool.get_connection()
     except Exception:
@@ -70,7 +77,11 @@ def _coerce_int(value: Any) -> Optional[int]:
     if value is None or value == "":
         return None
     try:
-        return int(str(value).replace(",", "").strip())
+        cleaned = str(value).replace(",", "").replace(".", "").strip()
+        cleaned = re.sub(r"[^\d\-]", "", cleaned)
+        if cleaned in ("", "-", None):
+            return None
+        return int(cleaned)
     except Exception:
         return None
 
@@ -79,7 +90,14 @@ def _coerce_decimal(value: Any) -> Optional[Decimal]:
     if value is None or value == "":
         return None
     try:
-        cleaned = str(value).replace(",", "").strip()
+        text = str(value)
+        # Remove common currency markers and whitespace
+        text = text.replace("Rp", "").replace("IDR", "").replace("idr", "")
+        text = text.replace(" ", "")
+        # Remove thousands separators and any other non-numeric characters
+        cleaned = re.sub(r"[^\d\.-]", "", text.replace(",", ""))
+        if cleaned in ("", "-", None):
+            return None
         return Decimal(cleaned)
     except Exception:
         return None
@@ -94,6 +112,15 @@ def _coerce_date(value: Any) -> Optional[str]:
         text = str(value).strip()
         if not text:
             return None
+
+        # Try common textual date formats first
+        for fmt in ("%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(text[:10] if fmt == "%Y-%m-%d" and "T" in text else text, fmt)
+                return parsed.strftime("%Y-%m-%d")
+            except Exception:
+                continue
+
         # Keep only YYYY-MM-DD portion if time is present
         return text.split("T")[0]
     except Exception:

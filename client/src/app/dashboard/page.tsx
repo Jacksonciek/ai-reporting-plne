@@ -197,7 +197,6 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-white">Recent rooms</h2>
-                <p className="text-sm text-slate-300">Fetched from the /rooms endpoint</p>
               </div>
               <RefreshCcw className="w-4 h-4 text-cyan-300" />
             </div>

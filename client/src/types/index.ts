@@ -107,17 +107,17 @@ export interface ApiError {
     updated_at?: string;
   }
 
-  export interface AdminLoginResponse {
-    token: string;
-    user: { id: number; username: string; role?: string; chat_user_id?: number };
-    message?: string;
-  }
+export interface AdminLoginResponse {
+  token: string;
+  user: { id: number; username: string; role?: string; chat_user_id?: number };
+  message?: string;
+}
 
-  export interface OcrHistoryEntry {
-    id: number;
-    transaksi_id?: number | null;
-    filename: string;
-    filesize_bytes: number;
+export interface OcrHistoryEntry {
+  id: number;
+  transaksi_id?: number | null;
+  filename: string;
+  filesize_bytes: number;
     page_count: number;
     status: 'uploading' | 'processing' | 'success' | 'failed';
     message?: string | null;

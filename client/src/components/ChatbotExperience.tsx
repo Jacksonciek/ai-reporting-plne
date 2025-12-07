@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { gsap } from 'gsap';
-import { Bot } from 'lucide-react';
+import { Bot, ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import ChatInterface from '@/components/ChatInterface';
@@ -38,10 +38,13 @@ const buildRoomNameFromPrompt = (prompt: string) => {
 
 export default function ChatbotExperience({
   preferChatView = false,
+  mode = 'user',
 }: {
   preferChatView?: boolean;
+  mode?: 'user' | 'admin';
 }) {
   const router = useRouter();
+  const isAdminMode = mode === 'admin';
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -527,6 +530,9 @@ export default function ChatbotExperience({
               onNewChat={handleNewChat}
               rooms={rooms}
               onRefreshRooms={refreshRooms}
+              footerHref={isAdminMode ? "/admin" : "/dashboard"}
+              footerLabel={isAdminMode ? "Back to Admin Menu" : "Dashboard"}
+              footerIcon={isAdminMode ? <ArrowLeft className="w-4 h-4" /> : undefined}
             />
 
             <AnimatePresence mode="wait">
