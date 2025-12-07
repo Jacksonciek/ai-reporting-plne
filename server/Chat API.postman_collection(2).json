@@ -1,0 +1,110 @@
+{
+	"info": {
+		"_postman_id": "35609a58-5d3f-4036-97a9-a6e5b9ccc15f",
+		"name": "Chat API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "41324254"
+	},
+	"item": [
+		{
+			"name": "Get Rooms",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"description": "POST"
+			},
+			"response": []
+		},
+		{
+			"name": "Create Room",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "http://127.0.0.1:5000/api/new_room",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"api",
+						"new_room"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Post Query",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"user_prompt\": \"berikan total penjualan yang dilakukan oleh Alice Johnson\",\r\n    \"room_id\": \"0e0d0f73-cffc-4997-a24e-36ac7cf0612b\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000/api/rooms/{{room_id}}/messages/bot",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"api",
+						"rooms",
+						"{{room_id}}",
+						"messages",
+						"bot"
+					],
+					"query": [
+						{
+							"key": "user_prompt",
+							"value": "berikan total penjualan yang dilakukan oleh Alice Johnson",
+							"description": "User message",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get Messages",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://127.0.0.1:5000/api/rooms/{{room_id}}/messages",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"api",
+						"rooms",
+						"{{room_id}}",
+						"messages"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
