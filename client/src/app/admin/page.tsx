@@ -40,12 +40,14 @@ const editableKeys: (keyof Transaction)[] = [
 ];
 
 const editableFields: { key: keyof Transaction; label: string; type?: string }[] = [
-  { key: "tanggal", label: "Date", type: "date" },
+  // Use plain text for date so formats like "03 Jan 2025" are displayed directly.
+  { key: "tanggal", label: "Date" },
   { key: "nama_produk", label: "Product Name" },
   { key: "kategori", label: "Category" },
   { key: "jumlah_terjual", label: "Units Sold", type: "number" },
-  { key: "harga_satuan", label: "Unit Price", type: "number" },
-  { key: "total_penjualan", label: "Total Sales", type: "number" },
+  // Use text inputs for currency-style fields so values like "Rp 3.850.000" are visible and editable.
+  { key: "harga_satuan", label: "Unit Price" },
+  { key: "total_penjualan", label: "Total Sales" },
   { key: "kota", label: "City" },
   { key: "salesperson", label: "Salesperson" },
   { key: "status_pembayaran", label: "Payment Status" },
@@ -86,6 +88,7 @@ export default function AdminPage() {
   const [ocrHistory, setOcrHistory] = useState<OcrHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const envAdminUsername = process.env.NEXT_PUBLIC_ADMIN_USERNAME || "";
   const envAdminPassword = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || "";
   const [loginPayload, setLoginPayload] = useState({ username: envAdminUsername, password: envAdminPassword });
@@ -93,10 +96,29 @@ export default function AdminPage() {
   const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [ocrPreviewRecords, setOcrPreviewRecords] = useState<Partial<Transaction>[]>([]);
+  const [ocrPreviewHistory, setOcrPreviewHistory] = useState<OcrHistoryEntry | null>(null);
+  const [isOcrPreviewOpen, setIsOcrPreviewOpen] = useState(false);
+  const [confirmingOcr, setConfirmingOcr] = useState(false);
 
   useEffect(() => {
     setHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!status) return;
+    if (statusTimeoutRef.current) {
+      clearTimeout(statusTimeoutRef.current);
+    }
+    statusTimeoutRef.current = setTimeout(() => {
+      setStatus(null);
+    }, 2500);
+    return () => {
+      if (statusTimeoutRef.current) {
+        clearTimeout(statusTimeoutRef.current);
+      }
+    };
+  }, [status]);
 
   const sanitizeTransaction = (
     payload: Partial<Transaction>,
@@ -147,10 +169,6 @@ export default function AdminPage() {
     if (stage === "success") return "bg-emerald-400";
     return "bg-cyan-400";
   };
-
-  if (!hydrated) {
-    return null;
-  }
 
   const activeOcrStage = ocrProgress.stage === "failed" ? "processing" : ocrProgress.stage;
 
@@ -298,6 +316,14 @@ export default function AdminPage() {
     setEditDraft(emptyForm);
   };
 
+  const resetOcrState = () => {
+    setOcrPreviewRecords([]);
+    setOcrPreviewHistory(null);
+    setPendingFile(null);
+    setOcrProgress({ stage: "idle", percent: 0, message: undefined });
+    setStatus(null);
+  };
+
   const handleUpload = async (file?: File | null) => {
     if (!file) return;
     setUploading(true);
@@ -316,15 +342,25 @@ export default function AdminPage() {
         }
       );
 
-      const records = result.transactions || [];
-      const firstRecord = records[0];
-      const sanitized = sanitizeTransaction(firstRecord || {});
-      setForm((prev) => ({ ...prev, ...sanitized }));
-      setTransactions((prev) => {
-        const incomingIds = new Set(records.map((item) => String(item.id_transaksi)));
-        const filteredPrev = prev.filter((item) => !incomingIds.has(String(item.id_transaksi)));
-        return [...records, ...filteredPrev];
-      });
+      const records = result.records || [];
+      if (!records.length) {
+        setStatus({
+          type: "error",
+          message: "No transactions detected in the PDF. Please check the document and try again.",
+        });
+        setOcrProgress({
+          stage: "failed",
+          percent: 100,
+          message: "No data extracted from document",
+        });
+        setPendingFile(null);
+        return;
+      }
+
+      const sanitizedRecords = records.map((rec) => sanitizeTransaction(rec, { includeId: true }));
+      setOcrPreviewRecords(sanitizedRecords);
+      setOcrPreviewHistory(result.history || null);
+      setIsOcrPreviewOpen(true);
 
       if (result.history) {
         setOcrHistory((prev) => {
@@ -334,12 +370,11 @@ export default function AdminPage() {
       } else {
         loadHistory();
       }
-
-      setStatus({
-        type: "success",
-        message: "Document extracted successfully",
+      setOcrProgress({
+        stage: "processing",
+        percent: 100,
+        message: "Review extracted data in the preview dialog, then confirm to save.",
       });
-      setOcrProgress({ stage: "success", percent: 100, message: "Document processed" });
       setPendingFile(null);
     } catch (error) {
       setStatus({
@@ -366,77 +401,93 @@ export default function AdminPage() {
   const heroGradient =
     "from-slate-950 via-slate-900 to-slate-800 bg-[radial-gradient(circle_at_20%_20%,rgba(45,212,191,0.16),transparent_25%),radial-gradient(circle_at_80%_10%,rgba(129,140,248,0.16),transparent_20%),radial-gradient(circle_at_50%_90%,rgba(59,130,246,0.18),transparent_25%)]";
 
+  if (!hydrated) {
+    return null;
+  }
+
   if (!isLoggedIn) {
     return (
-      <div className={`min-h-screen flex items-center justify-center px-6 py-16 bg-gradient-to-br ${heroGradient}`}>
-        <div className="max-w-3xl w-full">
-          <motion.div
-            className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-8 shadow-2xl shadow-cyan-500/10"
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <ShieldCheck className="w-10 h-10 text-cyan-300" />
-              <div>
-                <p className="text-cyan-200 text-sm uppercase tracking-[0.25em]">Admin Secure</p>
-                <h1 className="text-3xl font-semibold text-white">Admin Panel</h1>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="space-y-2">
-                <span className="text-sm text-slate-200">Username</span>
-                <input
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
-                  value={loginPayload.username}
-                  onChange={(e) => setLoginPayload({ ...loginPayload, username: e.target.value })}
-                  placeholder="username"
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm text-slate-200">Password</span>
-                <input
-                  type="password"
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
-                  value={loginPayload.password}
-                  onChange={(e) => setLoginPayload({ ...loginPayload, password: e.target.value })}
-                  placeholder="********"
-                />
-              </label>
-            </div>
-
-            <button
-              onClick={handleLogin}
-              className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 px-5 py-3 text-white font-semibold shadow-lg shadow-cyan-500/25 transition hover:scale-[1.01]"
+      <>
+        <AnimatePresence>
+          {status && (
+            <motion.div
+              className="fixed top-4 inset-x-0 flex justify-center z-50 pointer-events-none"
+              initial={{ y: -60, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -60, opacity: 0 }}
+              transition={{ duration: 0.35, ease: "easeOut" }}
             >
-              <Sparkles className="w-4 h-4" />
-              Sign in as Admin
-            </button>
+              <motion.div
+                className={`pointer-events-auto px-4 py-3 rounded-2xl border shadow-lg backdrop-blur-lg flex items-center space-x-3 ${
+                  status.type === "success"
+                    ? "bg-emerald-500/90 border-emerald-300/60"
+                    : "bg-rose-500/90 border-rose-300/60"
+                }`}
+                initial={{ scale: 0.95 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0.95 }}
+              >
+                {status.type === "success" ? (
+                  <CheckCircle2 className="w-4 h-4 text-white" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-white" />
+                )}
+                <span className="text-sm font-medium text-white">
+                  {status.message}
+                </span>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-            <AnimatePresence>
-              {status && (
-                <motion.div
-                  className={`mt-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
-                    status.type === "success"
-                      ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-100"
-                      : "border-rose-400/60 bg-rose-500/10 text-rose-100"
-                  }`}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                >
-                  {status.type === "success" ? (
-                    <CheckCircle2 className="w-4 h-4" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4" />
-                  )}
-                  <span>{status.message}</span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
+        <div className={`min-h-screen flex items-center justify-center px-6 py-16 bg-gradient-to-br ${heroGradient}`}>
+          <div className="max-w-3xl w-full">
+            <motion.div
+              className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-8 shadow-2xl shadow-cyan-500/10"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <ShieldCheck className="w-10 h-10 text-cyan-300" />
+                <div>
+                  <p className="text-cyan-200 text-sm uppercase tracking-[0.25em]">Admin Secure</p>
+                  <h1 className="text-3xl font-semibold text-white">Admin Panel</h1>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-200">Username</span>
+                  <input
+                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                    value={loginPayload.username}
+                    onChange={(e) => setLoginPayload({ ...loginPayload, username: e.target.value })}
+                    placeholder="username"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-200">Password</span>
+                  <input
+                    type="password"
+                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                    value={loginPayload.password}
+                    onChange={(e) => setLoginPayload({ ...loginPayload, password: e.target.value })}
+                    placeholder="********"
+                  />
+                </label>
+              </div>
+
+              <button
+                onClick={handleLogin}
+                className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 px-5 py-3 text-white font-semibold shadow-lg shadow-cyan-500/25 transition hover:scale-[1.01]"
+              >
+                <Sparkles className="w-4 h-4" />
+                Sign in as Admin
+              </button>
+            </motion.div>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -480,6 +531,38 @@ export default function AdminPage() {
             </button>
           </div>
         </div>
+
+        <AnimatePresence>
+          {status && (
+            <motion.div
+              className="fixed top-4 inset-x-0 flex justify-center z-50 pointer-events-none"
+              initial={{ y: -60, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -60, opacity: 0 }}
+              transition={{ duration: 0.35, ease: "easeOut" }}
+            >
+              <motion.div
+                className={`pointer-events-auto px-4 py-3 rounded-2xl border shadow-lg backdrop-blur-lg flex items-center space-x-3 ${
+                  status.type === "success"
+                    ? "bg-emerald-500/90 border-emerald-300/60"
+                    : "bg-rose-500/90 border-rose-300/60"
+                }`}
+                initial={{ scale: 0.95 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0.95 }}
+              >
+                {status.type === "success" ? (
+                  <CheckCircle2 className="w-4 h-4 text-white" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-white" />
+                )}
+                <span className="text-sm font-medium text-white">
+                  {status.message}
+                </span>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <motion.div
@@ -566,12 +649,6 @@ export default function AdminPage() {
                   onChange={(e) => {
                     const file = e.target.files?.[0] || null;
                     setPendingFile(file);
-                    if (file) {
-                      setStatus({
-                        type: "success",
-                        message: `Ready to process: ${file.name}`,
-                      });
-                    }
                   }}
                 />
 
@@ -758,28 +835,6 @@ export default function AdminPage() {
           </div>
         </div>
 
-        <AnimatePresence>
-          {status && (
-            <motion.div
-              className={`flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm ${
-                status.type === "success"
-                  ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100"
-                  : "border-rose-400/60 bg-rose-500/10 text-rose-100"
-              }`}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-            >
-              {status.type === "success" ? (
-                <CheckCircle2 className="w-4 h-4" />
-              ) : (
-                <AlertCircle className="w-4 h-4" />
-              )}
-              <span>{status.message}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         <motion.div
           className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 shadow-2xl shadow-cyan-500/10"
           initial={{ opacity: 0, y: 16 }}
@@ -866,6 +921,214 @@ export default function AdminPage() {
       </div>
 
       <AnimatePresence>
+        {isOcrPreviewOpen && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center px-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <div
+              className="absolute inset-0 bg-slate-950/70 backdrop-blur-md"
+              onClick={() => {
+                if (!confirmingOcr) {
+                  setIsOcrPreviewOpen(false);
+                  resetOcrState();
+                }
+              }}
+            />
+            <motion.div
+              className="relative w-full max-w-5xl rounded-3xl border border-white/10 bg-slate-900/95 p-6 shadow-2xl shadow-cyan-500/15"
+              initial={{ scale: 0.96, y: 12 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 12 }}
+            >
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <p className="text-sm text-cyan-200">OCR preview</p>
+                  <h3 className="text-xl font-semibold text-white">
+                    Review extracted transactions
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1 max-w-2xl">
+                    Please review and adjust the extracted fields below. When you confirm, the rows will be saved into the transaction database.
+                  </p>
+                  {ocrPreviewHistory?.filename && (
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Source file: {ocrPreviewHistory.filename} ({formatBytes(ocrPreviewHistory.filesize_bytes)} ·{" "}
+                      {ocrPreviewHistory.page_count} pages)
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    if (!confirmingOcr) {
+                      setIsOcrPreviewOpen(false);
+                      resetOcrState();
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border border-white/10 bg-white/5 text-xs text-slate-100 hover:bg-white/10"
+                >
+                  <XCircle className="w-4 h-4" />
+                  Cancel
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="lg:col-span-2 space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                  {ocrPreviewRecords.map((record, index) => (
+                    <div
+                      key={index}
+                      className="rounded-2xl border border-white/10 bg-slate-900/80 p-4 space-y-3"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2 text-sm text-cyan-200">
+                          <FileText className="w-4 h-4" />
+                          <span>Row {index + 1}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOcrPreviewRecords((prev) => prev.filter((_, idx) => idx !== index));
+                          }}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-1 border border-rose-300/40 bg-rose-500/10 text-[11px] text-rose-100 hover:bg-rose-500/20"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Remove row
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {editableFields.map((field) => (
+                          <label key={field.key} className="space-y-1">
+                            <span className="text-[11px] uppercase tracking-[0.15em] text-slate-300">
+                              {field.label}
+                            </span>
+                            <input
+                              type={field.type || "text"}
+                              value={String(record[field.key] ?? "")}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setOcrPreviewRecords((prev) =>
+                                  prev.map((row, idx) =>
+                                    idx === index ? { ...row, [field.key]: value } : row
+                                  )
+                                );
+                              }}
+                              className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                              placeholder={field.label}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+
+                  {ocrPreviewRecords.length === 0 && (
+                    <p className="text-sm text-slate-300">
+                      All rows have been removed from the preview. Close this dialog to cancel saving, or upload another PDF.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-3 text-xs text-slate-200">
+                    <div className="flex items-center gap-2 mb-1">
+                      <FileText className="w-4 h-4 text-cyan-300" />
+                      <span className="font-semibold text-cyan-100">Summary</span>
+                    </div>
+                    <p>
+                      Detected{" "}
+                      <span className="font-semibold">
+                        {ocrPreviewRecords.length}
+                      </span>{" "}
+                      row(s) from this PDF. You can remove any row that should not be saved.
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-emerald-300/40 bg-emerald-500/10 p-3 text-xs text-emerald-50 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4" />
+                      <span className="font-semibold">Confirmation required</span>
+                    </div>
+                    <p>
+                      When you click <span className="font-semibold">Confirm &amp; save</span>, the rows above will be written into the transaction table. You can still edit them later from the transaction list.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 mt-6">
+                <button
+                  onClick={async () => {
+                    if (!ocrPreviewRecords.length || confirmingOcr) return;
+                    setConfirmingOcr(true);
+                    setStatus(null);
+                    try {
+                      const result = await adminService.confirmOcrUpload(
+                        ocrPreviewHistory?.id,
+                        ocrPreviewRecords,
+                        uploadTargetId || undefined
+                      );
+
+                      const records = result.transactions || [];
+                      const firstRecord = records[0];
+                      const sanitized = sanitizeTransaction(firstRecord || {});
+                      setForm((prev) => ({ ...prev, ...sanitized }));
+                      setTransactions((prev) => {
+                        const incomingIds = new Set(records.map((item) => String(item.id_transaksi)));
+                        const filteredPrev = prev.filter((item) => !incomingIds.has(String(item.id_transaksi)));
+                        return [...records, ...filteredPrev];
+                      });
+
+                      if (result.history) {
+                        setOcrHistory((prev) => {
+                          const others = prev.filter((item) => item.id !== result.history?.id);
+                          return result.history ? [result.history, ...others].slice(0, 40) : prev;
+                        });
+                      } else {
+                        loadHistory();
+                      }
+
+                      setStatus({
+                        type: "success",
+                        message: "Transactions saved to database",
+                      });
+                      setOcrProgress({
+                        stage: "success",
+                        percent: 100,
+                        message: "Document processed and saved",
+                      });
+                      setIsOcrPreviewOpen(false);
+                      setOcrPreviewRecords([]);
+                      setOcrPreviewHistory(null);
+                    } catch (error) {
+                      setStatus({
+                        type: "error",
+                        message: error instanceof Error ? error.message : "Failed to save extracted data",
+                      });
+                      setOcrProgress({
+                        stage: "failed",
+                        percent: 100,
+                        message: error instanceof Error ? error.message : "Failed to save extracted data",
+                      });
+                    } finally {
+                      setConfirmingOcr(false);
+                    }
+                  }}
+                  disabled={confirmingOcr || !ocrPreviewRecords.length}
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 text-sm font-semibold text-slate-900 shadow-lg shadow-emerald-500/20 disabled:opacity-60"
+                >
+                  {confirmingOcr ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4" />
+                  )}
+                  {confirmingOcr ? "Saving..." : "Confirm & save"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
         {isEditModalOpen && (
           <motion.div
             className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -917,12 +1180,6 @@ export default function AdminPage() {
               </div>
 
               <div className="flex justify-end gap-2 mt-6">
-                <button
-                  onClick={closeEditModal}
-                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 border border-white/10 bg-white/5 text-sm text-slate-100 hover:bg-white/10"
-                >
-                  Cancel
-                </button>
                 <button
                   onClick={handleUpdate}
                   className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 text-sm font-semibold text-slate-900 shadow-lg shadow-cyan-500/20"

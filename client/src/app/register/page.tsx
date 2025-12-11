@@ -77,9 +77,9 @@ export default function RegisterPage() {
           <div className="flex-1 space-y-6">
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-cyan-200">Create Account</p>
-              <h1 className="mt-2 text-3xl font-semibold text-white">Register a Demo Account</h1>
+              <h1 className="mt-2 text-3xl font-semibold text-white">Register an Account</h1>
               <p className="text-sm text-slate-300">
-                This registration instantly creates your demo account and logs you into the app.
+                This registration instantly creates your account and logs you into the app.
               </p>
             </div>
 

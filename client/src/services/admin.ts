@@ -161,7 +161,7 @@ export const adminService = {
     file: File,
     targetId?: string,
     onProgress?: (payload: { percent: number; stage: 'uploading' | 'processing' | 'success' | 'failed' }) => void
-  ): Promise<{ transactions: Transaction[]; history?: OcrHistoryEntry | null }> {
+  ): Promise<{ records: Partial<Transaction>[]; history?: OcrHistoryEntry | null }> {
     const formData = new FormData();
     formData.append('file', file);
     if (targetId) formData.append('id_transaksi', targetId);
@@ -171,8 +171,11 @@ export const adminService = {
       onUploadProgress: (evt) => {
         if (!onProgress) return;
         const total = evt.total || file.size || 1;
-        const percent = Math.min(99, Math.round((evt.loaded / total) * 100));
-        onProgress({ percent, stage: 'uploading' });
+        const raw = Math.round((evt.loaded / total) * 100);
+        // Map real upload progress (0–100) into a smaller visual range (5–65)
+        // so there is still room for an OCR “processing” phase afterwards.
+        const mapped = Math.max(5, Math.min(65, Math.round((raw / 100) * 65)));
+        onProgress({ percent: mapped, stage: 'uploading' });
       },
     });
 
@@ -181,15 +184,42 @@ export const adminService = {
       throw new Error(data?.error || 'Failed to extract document');
     }
 
-    onProgress?.({ percent: 100, stage: 'processing' });
+    // Nudge progress into the processing range while waiting for UI preview.
+    onProgress?.({ percent: 85, stage: 'processing' });
 
     const result = {
-      transactions: (data?.data as Transaction[]) || [],
+      records: ((data?.records as Partial<Transaction>[]) || []).map((item) => item || {}),
       history: (data?.history as OcrHistoryEntry) || null,
     };
 
     onProgress?.({ percent: 100, stage: 'success' });
     return result;
+  },
+
+  async confirmOcrUpload(
+    historyId: number | undefined,
+    records: Partial<Transaction>[],
+    targetId?: string
+  ): Promise<{ transactions: Transaction[]; history?: OcrHistoryEntry | null }> {
+    const response = await fetch(`${API_BASE_URL}/api/admin/transactions/upload/confirm`, {
+      method: 'POST',
+      headers: { ...buildHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        history_id: historyId,
+        records,
+        id_transaksi: targetId,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || 'Failed to save extracted transactions');
+    }
+
+    return {
+      transactions: (data?.data as Transaction[]) || [],
+      history: (data?.history as OcrHistoryEntry) || null,
+    };
   },
 
   async listOcrHistory(limit = 30): Promise<OcrHistoryEntry[]> {

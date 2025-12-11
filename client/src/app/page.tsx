@@ -56,7 +56,7 @@ export default function SplashHome() {
               </span>
             </h1>
             <p className="text-lg text-slate-300 sm:text-xl">
-              Start from this splash screen and choose whether to log in or create a demo account.
+              Start from this splash screen and choose whether to log in or create an account.
             </p>
           </div>
 
@@ -72,7 +72,7 @@ export default function SplashHome() {
               href="/register"
               className="inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/10 px-8 py-3 text-lg font-semibold text-white shadow-sm transition hover:border-cyan-300/40 hover:bg-white/15"
             >
-              Register demo account
+              Register account
             </Link>
           </div>
 

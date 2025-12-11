@@ -91,11 +91,11 @@ def _coerce_decimal(value: Any) -> Optional[Decimal]:
         return None
     try:
         text = str(value)
-        # Remove common currency markers and whitespace
+        # Remove common currency markers
         text = text.replace("Rp", "").replace("IDR", "").replace("idr", "")
-        text = text.replace(" ", "")
-        # Remove thousands separators and any other non-numeric characters
-        cleaned = re.sub(r"[^\d\.-]", "", text.replace(",", ""))
+        # For robustness with Indonesian formatting like "Rp 3.850.000" or "Rp 3,850,000",
+        # just keep digits and optional leading minus sign and drop all other characters.
+        cleaned = re.sub(r"[^\d\-]", "", text)
         if cleaned in ("", "-", None):
             return None
         return Decimal(cleaned)

@@ -119,8 +119,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  const [copyNotification, setCopyNotification] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const copyNotificationTimeout = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   useEffect(() => {
     scrollToBottom();
@@ -131,6 +135,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       inputRef.current.focus();
     }
   }, [roomId]);
+
+  useEffect(() => {
+    return () => {
+      if (copyNotificationTimeout.current) {
+        clearTimeout(copyNotificationTimeout.current);
+      }
+    };
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -157,6 +169,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       await navigator.clipboard.writeText(text);
       setCopiedMessageId(messageId);
       setTimeout(() => setCopiedMessageId(null), 2000);
+      if (copyNotificationTimeout.current) {
+        clearTimeout(copyNotificationTimeout.current);
+      }
+      setCopyNotification("Message copied to clipboard");
+      copyNotificationTimeout.current = setTimeout(
+        () => setCopyNotification(null),
+        2500
+      );
     } catch (error) {
       console.error("Failed to copy text:", error);
     }
@@ -342,8 +362,33 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   return (
-    <div
-      className={`
+    <>
+      <AnimatePresence>
+        {copyNotification && (
+          <motion.div
+            className="fixed top-4 inset-x-0 flex justify-center z-50 pointer-events-none"
+            initial={{ y: -60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -60, opacity: 0 }}
+            transition={{ duration: 0.35, ease: "easeOut" }}
+          >
+            <motion.div
+              className="pointer-events-auto px-4 py-3 rounded-2xl bg-slate-900/90 border border-white/10 shadow-lg backdrop-blur-lg flex items-center space-x-3"
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+            >
+              <Check className="w-5 h-5 text-emerald-300" />
+              <span className="text-sm font-medium text-white">
+                {copyNotification}
+              </span>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div
+        className={`
       flex flex-col h-screen transition-all duration-300 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800
       ${sidebarExpanded ? "ml-80" : "ml-16"}
     `}
@@ -475,7 +520,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 exit={{ scale: 0 }}
                                 transition={{ duration: 0.2 }}
                               >
-                                <Copy className="w-4 h-4 text-slate-700" />
+                                <Copy className="w-4 h-4 text-white" />
                               </motion.div>
                             )}
                           </AnimatePresence>
@@ -567,7 +612,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           AI can make mistakes. Please verify important information.
         </motion.p>
       </motion.div>
-    </div>
+      </div>
+    </>
   );
 };
 

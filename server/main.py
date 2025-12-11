@@ -317,22 +317,35 @@ def _parse_json_like(text) -> dict:
     return {}
 
 
-def extract_transaction_from_text(raw_text: str) -> dict:
+def extract_transaction_from_text(raw_text: str):
     """
-    Ask the LLM to normalize the PDF text into a transaction payload.
+    Ask the LLM to normalize the PDF text into one or more transaction payloads.
+
+    Returns a list of transaction-like dicts. Each dict may contain the
+    editable transaction fields (see TRANSACTION_MUTABLE_FIELDS) and,
+    optionally, id_transaksi when explicitly present in the document.
     """
     if not raw_text:
-        return {}
+        return []
 
     system_prompt = (
         "You are a transaction data extraction assistant. "
-        "Return JSON with exactly the following keys (only these should be populated): "
-        f"{', '.join(TRANSACTION_MUTABLE_FIELDS)}. "
-        "Include id_transaksi only if it is explicitly mentioned in the document as a reference, "
-        "and do not change any other key names. If the PDF contains multiple rows, pick the most complete single row "
-        "and only return that one object. Do not return arrays. "
-        "Keep the field names unchanged. "
-        "Fill in any string or numeric values you find; use null if the value is missing."
+        "The PDF contains a tabular report with the following header columns in Indonesian:\n"
+        "  Tanggal | Nama Produk | Kategori | Jumlah Terjual | Harga Satuan | Total Penjualan | "
+        "Kota | Salesperson | Status Pembayaran | Metode Pembayaran | Konsumen.\n"
+        "Return a JSON object with a single key 'rows', whose value is an array of transaction objects. "
+        "Each transaction object must use exactly these keys (only these should be populated): "
+        "tanggal, nama_produk, kategori, jumlah_terjual, harga_satuan, total_penjualan, kota, "
+        "salesperson, status_pembayaran, metode_pembayaran, konsumen. "
+        "Use the 'tanggal' values directly from the date column (formats like '02 Feb 2025' or '03 Jan 2025'). "
+        "For 'harga_satuan' and 'total_penjualan', always copy the numeric amount associated with the currency "
+        "(for example 'Rp 3.850.000' or '3,850,000'); do not invent values and do not leave them null when the table contains numbers. "
+        "Include id_transaksi in a row only if it is explicitly mentioned in the document as a reference, "
+        "and do not change any other key names. "
+        "If the PDF contains multiple rows, include all of them in the 'rows' array. "
+        "If there is only one row, still return it inside the 'rows' array. "
+        "Do not wrap the JSON in markdown fences and do not add any extra keys outside 'rows'. "
+        "Fill in any string or numeric values you find; use null only if the value is truly missing in the source."
     )
 
     truncated = raw_text[:6000]
@@ -340,12 +353,12 @@ def extract_transaction_from_text(raw_text: str) -> dict:
         SystemMessage(
             content=(
                 system_prompt
-                + " Respond with a single JSON object only (no code fences, no arrays, no extra text)."
+                + " Respond with a single JSON object only (no code fences, no extra text)."
             )
         ),
         HumanMessage(
             content=(
-                "Extract the transaction data from the following text. "
+                "Extract all transaction rows from the following text. "
                 "If any information is missing, simply set it to null.\n\n"
                 f"{truncated}"
             )
@@ -359,17 +372,36 @@ def extract_transaction_from_text(raw_text: str) -> dict:
     except Exception as exc:
         print(f"[OCR] Structured LLM extraction failed, retrying without enforced JSON: {exc}")
         try:
-          response = model.invoke(messages)
+            response = model.invoke(messages)
         except Exception as final_exc:
             print(f"[OCR] LLM extraction failed: {final_exc}")
-            return {}
+            return []
 
     raw_content = response.content
     content = raw_content if isinstance(raw_content, str) else raw_content
     parsed = _parse_json_like(content)
     if not parsed:
         print(f"[OCR] Could not parse LLM response: {content}")
-    return parsed
+        return []
+
+    # Normalise into a list[dict]
+    records = []
+    if isinstance(parsed, dict):
+        rows = None
+        # Prefer common container keys if the model didn't follow the 'rows' instruction perfectly
+        for key in ("rows", "data", "transactions", "items"):
+            if key in parsed:
+                rows = parsed[key]
+                break
+        if isinstance(rows, list):
+            records = [r for r in rows if isinstance(r, dict)]
+        else:
+            # Fall back to treating the entire object as a single record
+            records = [parsed]
+    elif isinstance(parsed, list):
+        records = [r for r in parsed if isinstance(r, dict)]
+
+    return records
 
 
 def _password_key(username: str) -> str:
@@ -858,7 +890,11 @@ def admin_transaction_detail(trans_id):
 @admin_required
 def admin_upload_transaction():
     """
-    Upload a PDF, extract text, run through LLM, and save/return a transaction payload.
+    Upload a PDF, extract text, run through LLM, and return a preview of
+    one or more transaction payloads without persisting them to the database.
+
+    The admin must confirm the preview in a separate step before data
+    is written to the transaksi table.
     """
     history_id = None
     try:
@@ -880,6 +916,7 @@ def admin_upload_transaction():
         file_bytes = file.read()
         raw_text, page_count = extract_text_and_meta_from_pdf(file_bytes)
 
+        # Create OCR history entry for this upload
         history_id = create_ocr_history(
             filename=file.filename,
             filesize=len(file_bytes),
@@ -890,37 +927,20 @@ def admin_upload_transaction():
 
         llm_result = extract_transaction_from_text(raw_text)
 
-        # Support multiple rows: normalize each record. Keep first for response/UI.
+        # Normalise to a list of preview records (not yet persisted)
         records = llm_result if isinstance(llm_result, list) else [llm_result]
-        persisted_records = []
+        preview_records = [r for r in records if isinstance(r, dict)]
 
-        target_id = request.form.get("id_transaksi")
-
-        for idx, rec in enumerate(records):
-            payload = normalize_transaction_payload(rec or {})
-
-            # Only attempt to update a specific id for the first record
-            use_target = target_id if idx == 0 else None
-            target_exists = use_target and get_transaction(use_target)
-            if use_target and target_exists:
-                persisted = update_transaction(use_target, payload)
-            else:
-                persisted = create_transaction(payload)
-            if persisted:
-                persisted_records.append(persisted)
-
+        # Update history entry to reflect that extraction has completed,
+        # but confirmation/persistence is still pending.
         if history_id:
-            try:
-                persisted_first = persisted_records[0] if persisted_records else None
-                persisted_id = int(str(persisted_first.get("id_transaksi"))) if persisted_first else None
-            except Exception:
-                persisted_id = None
+            first_sample = preview_records[0] if preview_records else {}
             update_ocr_history(
                 history_id,
-                "success",
-                transaksi_id=persisted_id,
-                message="Document extracted successfully",
-                fields=persisted_first if persisted_first else (records[0] if records else {}),
+                "processing",
+                transaksi_id=None,
+                message="Document extracted; awaiting admin confirmation",
+                fields=first_sample,
                 ocr_preview=(raw_text or "")[:1200],
             )
 
@@ -928,8 +948,8 @@ def admin_upload_transaction():
             jsonify(
                 {
                     "status_code": "ADM-000",
-                    "message": "Document extracted successfully",
-                    "data": persisted_records,
+                    "message": "Document extracted successfully (preview only)",
+                    "records": preview_records,
                     "history": get_ocr_history_entry(history_id) if history_id else None,
                 }
             ),
@@ -943,6 +963,96 @@ def admin_upload_transaction():
                 {
                     "status_code": "ADM-999",
                     "error": f"Failed to process upload: {exc}",
+                }
+            ),
+            500,
+        )
+
+
+@app.route("/api/admin/transactions/upload/confirm", methods=["POST"])
+@admin_required
+def admin_confirm_upload_transaction():
+    """
+    Confirm OCR/LLM extraction results and persist them into the transaksi table.
+
+    Expected JSON body:
+      - history_id: int (optional but recommended)
+      - records: array of transaction-like objects (required)
+      - id_transaksi: optional target transaction id to update for the first row
+    """
+    payload = request.get_json() or {}
+    history_id = payload.get("history_id")
+    records = payload.get("records") or []
+    target_id = payload.get("id_transaksi")
+
+    if not isinstance(records, list) or not records:
+        return (
+            jsonify(
+                {
+                    "status_code": "ADM-400",
+                    "error": "No records provided to persist",
+                }
+            ),
+            400,
+        )
+
+    try:
+        persisted_records = []
+
+        for idx, rec in enumerate(records):
+            rec = rec or {}
+            normalized = normalize_transaction_payload(rec)
+
+            # Only attempt to update a specific id for the first record
+            use_target = target_id if idx == 0 else None
+            target_exists = use_target and get_transaction(use_target)
+
+            if use_target and target_exists:
+                persisted = update_transaction(use_target, normalized)
+            else:
+                persisted = create_transaction(normalized)
+
+            if persisted:
+                persisted_records.append(persisted)
+
+        history_entry = None
+        if history_id:
+            existing = get_ocr_history_entry(history_id)
+            preview_text = existing.get("ocr_preview") if existing else None
+            try:
+                first_persisted = persisted_records[0] if persisted_records else None
+                persisted_id = int(str(first_persisted.get("id_transaksi"))) if first_persisted else None
+            except Exception:
+                persisted_id = None
+
+            history_entry = update_ocr_history(
+                history_id,
+                "success",
+                transaksi_id=persisted_id,
+                message="Document saved to database",
+                fields=persisted_records[0] if persisted_records else (records[0] if records else {}),
+                ocr_preview=preview_text,
+            )
+
+        return (
+            jsonify(
+                {
+                    "status_code": "ADM-000",
+                    "message": "Transactions saved successfully",
+                    "data": persisted_records,
+                    "history": history_entry,
+                }
+            ),
+            200,
+        )
+    except Exception as exc:
+        if history_id:
+            update_ocr_history(history_id, "failed", message=str(exc))
+        return (
+            jsonify(
+                {
+                    "status_code": "ADM-999",
+                    "error": f"Failed to confirm upload: {exc}",
                 }
             ),
             500,
