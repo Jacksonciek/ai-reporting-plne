@@ -127,6 +127,56 @@ def _coerce_date(value: Any) -> Optional[str]:
         return None
 
 
+def _normalize_city_name(value: Any) -> Optional[str]:
+    """
+    Normalize city names so that case-insensitive duplicates are mapped
+    to a single canonical value from existing data.
+
+    Example: if the database already contains "Medan" and the admin types
+    "medan", the stored value will still be "Medan".
+    """
+    if value in (None, "", "null", "None"):
+        return None
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        # Collapse internal whitespace and compare case-insensitively
+        text = re.sub(r"\s+", " ", text)
+        key = text.lower()
+
+        conn = _get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT kota
+                FROM transaksi
+                WHERE kota IS NOT NULL
+                  AND LOWER(kota) = %s
+                ORDER BY id_transaksi ASC
+                LIMIT 1
+                """,
+                (key,),
+            )
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+            conn.close()
+
+        if row and row[0]:
+            return row[0]
+
+        # No existing canonical value found; keep the admin's input as-is.
+        return text
+    except Exception:
+        # On any failure, fall back to the raw string to avoid blocking writes.
+        try:
+            return str(value).strip() or None
+        except Exception:
+            return None
+
+
 def normalize_transaction_payload(data: Dict, include_id: bool = False) -> Dict:
     """
     Sanitize payload to only the allowed transaction fields and coerce types.
@@ -146,6 +196,8 @@ def normalize_transaction_payload(data: Dict, include_id: bool = False) -> Dict:
                 normalized[field] = _coerce_decimal(value)
             elif field == "tanggal":
                 normalized[field] = _coerce_date(value)
+            elif field == "kota":
+                normalized[field] = _normalize_city_name(value)
             else:
                 normalized[field] = value if value not in ("null", None, "") else None
 

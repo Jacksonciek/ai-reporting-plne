@@ -40,8 +40,7 @@ const editableKeys: (keyof Transaction)[] = [
 ];
 
 const editableFields: { key: keyof Transaction; label: string; type?: string }[] = [
-  // Use plain text for date so formats like "03 Jan 2025" are displayed directly.
-  { key: "tanggal", label: "Date" },
+  { key: "tanggal", label: "Date", type: "date" },
   { key: "nama_produk", label: "Product Name" },
   { key: "kategori", label: "Category" },
   { key: "jumlah_terjual", label: "Units Sold", type: "number" },
@@ -100,6 +99,20 @@ export default function AdminPage() {
   const [ocrPreviewHistory, setOcrPreviewHistory] = useState<OcrHistoryEntry | null>(null);
   const [isOcrPreviewOpen, setIsOcrPreviewOpen] = useState(false);
   const [confirmingOcr, setConfirmingOcr] = useState(false);
+  const cityOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    transactions.forEach((trx) => {
+      const rawCity = trx.kota;
+      if (!rawCity) return;
+      const text = String(rawCity).trim();
+      if (!text) return;
+      const key = text.toLowerCase();
+      if (!seen.has(key)) {
+        seen.set(key, text);
+      }
+    });
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }, [transactions]);
 
   useEffect(() => {
     setHydrated(true);
@@ -576,9 +589,6 @@ export default function AdminPage() {
                 <h2 className="text-xl font-semibold text-white">
                   Add transaction
                 </h2>
-                <p className="text-xs text-slate-300 mt-1">
-                  Supported fields: date, product name, category, units sold, unit price, total sales, city, salesperson, payment status, payment method, and customer.
-                </p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -599,11 +609,19 @@ export default function AdminPage() {
                   </span>
                   <input
                     type={field.type || "text"}
+                    list={field.key === "kota" && cityOptions.length ? "city-options-create" : undefined}
                     value={String(form[field.key] ?? "")}
                     onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}
                     className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
                     placeholder={field.label}
                   />
+                  {field.key === "kota" && cityOptions.length > 0 && (
+                    <datalist id="city-options-create">
+                      {cityOptions.map((city) => (
+                        <option key={city} value={city} />
+                      ))}
+                    </datalist>
+                  )}
                 </label>
               ))}
             </div>
@@ -1003,7 +1021,7 @@ export default function AdminPage() {
                               {field.label}
                             </span>
                             <input
-                              type={field.type || "text"}
+                              type={field.key === "tanggal" ? "text" : field.type || "text"}
                               value={String(record[field.key] ?? "")}
                               onChange={(e) => {
                                 const value = e.target.value;
@@ -1170,11 +1188,19 @@ export default function AdminPage() {
                     </span>
                     <input
                       type={field.type || "text"}
+                      list={field.key === "kota" && cityOptions.length ? "city-options-edit" : undefined}
                       value={String(editDraft[field.key] ?? "")}
                       onChange={(e) => setEditDraft({ ...editDraft, [field.key]: e.target.value })}
                       className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
                       placeholder={field.label}
                     />
+                    {field.key === "kota" && cityOptions.length > 0 && (
+                      <datalist id="city-options-edit">
+                        {cityOptions.map((city) => (
+                          <option key={city} value={city} />
+                        ))}
+                      </datalist>
+                    )}
                   </label>
                 ))}
               </div>
@@ -1266,5 +1292,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
-
