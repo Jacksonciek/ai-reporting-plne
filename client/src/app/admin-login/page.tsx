@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, ArrowLeft, CheckCircle2, LogIn, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle2, LogIn, LogOut, ShieldCheck, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { adminAuth } from "@/services/admin";
 
@@ -16,6 +16,13 @@ export default function AdminLoginPage() {
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [adminUser, setAdminUser] = useState<{ username?: string } | null>(null);
+
+  useEffect(() => {
+    setIsAuthenticated(adminAuth.isAuthenticated());
+    setAdminUser(adminAuth.getUser());
+  }, []);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -24,6 +31,8 @@ export default function AdminLoginPage() {
     setLoading(true);
     try {
       await adminAuth.login(username, password);
+      setIsAuthenticated(true);
+      setAdminUser(adminAuth.getUser());
       setStatus("success");
       setFeedback("Admin login successful, redirecting to console...");
       router.push("/admin");
@@ -33,6 +42,14 @@ export default function AdminLoginPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleLogout = () => {
+    adminAuth.logout();
+    setIsAuthenticated(false);
+    setAdminUser(null);
+    setStatus("success");
+    setFeedback("Signed out.");
   };
 
   return (
@@ -64,71 +81,133 @@ export default function AdminLoginPage() {
           </Link>
         </motion.div>
 
-        <motion.form
-          onSubmit={handleSubmit}
-          className="flex-1 space-y-5 rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl shadow-cyan-500/20 backdrop-blur-2xl"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <div className="space-y-2">
-            <label className="text-sm text-slate-200">Admin username</label>
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder:text-slate-500 focus:border-cyan-400/60 focus:outline-none focus:ring-2 focus:ring-cyan-300/30"
-              placeholder="username"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm text-slate-200">Admin password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder:text-slate-500 focus:border-cyan-400/60 focus:outline-none focus:ring-2 focus:ring-cyan-300/30"
-              placeholder="********"
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 px-5 py-3 text-slate-900 font-semibold shadow-lg shadow-cyan-500/30 transition hover:scale-[1.01] disabled:opacity-60"
+        {isAuthenticated ? (
+          <motion.div
+            className="flex-1 space-y-5 rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl shadow-cyan-500/20 backdrop-blur-2xl"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
           >
-            <LogIn className="w-4 h-4" />
-            {loading ? "Processing..." : "Admin Login"}
-          </button>
+            <div className="space-y-2">
+              <p className="text-sm uppercase tracking-[0.25em] text-cyan-200">Active session</p>
+              <h2 className="text-2xl font-semibold text-white">You are signed in</h2>
+              <p className="text-sm text-slate-300">
+                Signed in as <span className="text-white">{adminUser?.username || "admin"}</span>.
+              </p>
+            </div>
 
-          <AnimatePresence>
-            {status !== "idle" && (
-              <motion.div
-                className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
-                  status === "success"
-                    ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100"
-                    : "border-rose-400/60 bg-rose-500/10 text-rose-100"
-                }`}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => router.push("/admin")}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 px-5 py-3 text-slate-900 font-semibold shadow-lg shadow-cyan-500/30 transition hover:scale-[1.01]"
               >
-                {status === "success" ? (
-                  <CheckCircle2 className="w-4 h-4" />
-                ) : (
-                  <AlertCircle className="w-4 h-4" />
-                )}
-                <span>{feedback}</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                <LogIn className="w-4 h-4" />
+                Go to console
+              </button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-300/40 bg-rose-500/10 px-5 py-3 text-rose-100 font-semibold hover:bg-rose-500/20 transition"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign out
+              </button>
+            </div>
 
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <ShieldCheck className="w-4 h-4 text-cyan-300" />
-            <span>Use the admin credentials provided by your team.</span>
-          </div>
-        </motion.form>
+            <AnimatePresence>
+              {status !== "idle" && (
+                <motion.div
+                  className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
+                    status === "success"
+                      ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100"
+                      : "border-rose-400/60 bg-rose-500/10 text-rose-100"
+                  }`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                >
+                  {status === "success" ? (
+                    <CheckCircle2 className="w-4 h-4" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4" />
+                  )}
+                  <span>{feedback}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <ShieldCheck className="w-4 h-4 text-cyan-300" />
+              <span>Sign out here to end the admin session.</span>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.form
+            onSubmit={handleSubmit}
+            className="flex-1 space-y-5 rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl shadow-cyan-500/20 backdrop-blur-2xl"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <div className="space-y-2">
+              <label className="text-sm text-slate-200">Admin username</label>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder:text-slate-500 focus:border-cyan-400/60 focus:outline-none focus:ring-2 focus:ring-cyan-300/30"
+                placeholder="username"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm text-slate-200">Admin password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder:text-slate-500 focus:border-cyan-400/60 focus:outline-none focus:ring-2 focus:ring-cyan-300/30"
+                placeholder="********"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 px-5 py-3 text-slate-900 font-semibold shadow-lg shadow-cyan-500/30 transition hover:scale-[1.01] disabled:opacity-60"
+            >
+              <LogIn className="w-4 h-4" />
+              {loading ? "Processing..." : "Admin Login"}
+            </button>
+
+            <AnimatePresence>
+              {status !== "idle" && (
+                <motion.div
+                  className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
+                    status === "success"
+                      ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100"
+                      : "border-rose-400/60 bg-rose-500/10 text-rose-100"
+                  }`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                >
+                  {status === "success" ? (
+                    <CheckCircle2 className="w-4 h-4" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4" />
+                  )}
+                  <span>{feedback}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <ShieldCheck className="w-4 h-4 text-cyan-300" />
+              <span>Use the admin credentials provided by your team.</span>
+            </div>
+          </motion.form>
+        )}
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertCircle,
@@ -11,7 +11,6 @@ import {
   FileText,
   History,
   Loader2,
-  LogOut,
   MessageCircle,
   PlusCircle,
   RefreshCw,
@@ -69,7 +68,6 @@ const formatBytes = (bytes: number) => {
 
 export default function AdminPage() {
   const router = useRouter();
-  const [adminUser, setAdminUser] = useState(adminAuth.getUser());
   const [hydrated, setHydrated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -88,9 +86,6 @@ export default function AdminPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const envAdminUsername = process.env.NEXT_PUBLIC_ADMIN_USERNAME || "";
-  const envAdminPassword = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || "";
-  const [loginPayload, setLoginPayload] = useState({ username: envAdminUsername, password: envAdminPassword });
   const [uploadTargetId, setUploadTargetId] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -117,6 +112,12 @@ export default function AdminPage() {
   useEffect(() => {
     setHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (adminAuth.isAuthenticated()) return;
+    router.replace("/admin-login");
+  }, [hydrated, router]);
 
   useEffect(() => {
     if (!status) return;
@@ -185,7 +186,7 @@ export default function AdminPage() {
 
   const activeOcrStage = ocrProgress.stage === "failed" ? "processing" : ocrProgress.stage;
 
-  const isLoggedIn = useMemo(() => Boolean(adminAuth.isAuthenticated()), [adminUser]);
+  const isLoggedIn = adminAuth.isAuthenticated();
 
   const loadHistory = async () => {
     setHistoryLoading(true);
@@ -234,21 +235,6 @@ export default function AdminPage() {
     adminAuth.ensureChatSession();
     bootstrapAdminData();
   }, [isLoggedIn]);
-
-  const handleLogin = async () => {
-    setStatus(null);
-    try {
-      const res = await adminAuth.login(loginPayload.username, loginPayload.password);
-      setAdminUser(res.user);
-      adminAuth.ensureChatSession();
-      await bootstrapAdminData();
-    } catch (error) {
-      setStatus({
-        type: "error",
-        message: error instanceof Error ? error.message : "Admin login failed",
-      });
-    }
-  };
 
   const handleSave = async () => {
     setStatus(null);
@@ -404,13 +390,6 @@ export default function AdminPage() {
     }
   };
 
-  const handleLogout = () => {
-    adminAuth.logout();
-    setAdminUser(null);
-    setTransactions([]);
-    setOcrHistory([]);
-  };
-
   const heroGradient =
     "from-slate-950 via-slate-900 to-slate-800 bg-[radial-gradient(circle_at_20%_20%,rgba(45,212,191,0.16),transparent_25%),radial-gradient(circle_at_80%_10%,rgba(129,140,248,0.16),transparent_20%),radial-gradient(circle_at_50%_90%,rgba(59,130,246,0.18),transparent_25%)]";
 
@@ -419,89 +398,7 @@ export default function AdminPage() {
   }
 
   if (!isLoggedIn) {
-    return (
-      <>
-        <AnimatePresence>
-          {status && (
-            <motion.div
-              className="fixed top-4 inset-x-0 flex justify-center z-50 pointer-events-none"
-              initial={{ y: -60, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -60, opacity: 0 }}
-              transition={{ duration: 0.35, ease: "easeOut" }}
-            >
-              <motion.div
-                className={`pointer-events-auto px-4 py-3 rounded-2xl border shadow-lg backdrop-blur-lg flex items-center space-x-3 ${
-                  status.type === "success"
-                    ? "bg-emerald-500/90 border-emerald-300/60"
-                    : "bg-rose-500/90 border-rose-300/60"
-                }`}
-                initial={{ scale: 0.95 }}
-                animate={{ scale: 1 }}
-                exit={{ scale: 0.95 }}
-              >
-                {status.type === "success" ? (
-                  <CheckCircle2 className="w-4 h-4 text-white" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-white" />
-                )}
-                <span className="text-sm font-medium text-white">
-                  {status.message}
-                </span>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div className={`min-h-screen flex items-center justify-center px-6 py-16 bg-gradient-to-br ${heroGradient}`}>
-          <div className="max-w-3xl w-full">
-            <motion.div
-              className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-8 shadow-2xl shadow-cyan-500/10"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
-              <div className="flex items-center gap-3 mb-6">
-                <ShieldCheck className="w-10 h-10 text-cyan-300" />
-                <div>
-                  <p className="text-cyan-200 text-sm uppercase tracking-[0.25em]">Admin Secure</p>
-                  <h1 className="text-3xl font-semibold text-white">Admin Panel</h1>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label className="space-y-2">
-                  <span className="text-sm text-slate-200">Username</span>
-                  <input
-                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
-                    value={loginPayload.username}
-                    onChange={(e) => setLoginPayload({ ...loginPayload, username: e.target.value })}
-                    placeholder="username"
-                  />
-                </label>
-                <label className="space-y-2">
-                  <span className="text-sm text-slate-200">Password</span>
-                  <input
-                    type="password"
-                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
-                    value={loginPayload.password}
-                    onChange={(e) => setLoginPayload({ ...loginPayload, password: e.target.value })}
-                    placeholder="********"
-                  />
-                </label>
-              </div>
-
-              <button
-                onClick={handleLogin}
-                className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 px-5 py-3 text-white font-semibold shadow-lg shadow-cyan-500/25 transition hover:scale-[1.01]"
-              >
-                <Sparkles className="w-4 h-4" />
-                Sign in as Admin
-              </button>
-            </motion.div>
-          </div>
-        </div>
-      </>
-    );
+    return null;
   }
 
   return (
@@ -536,11 +433,11 @@ export default function AdminPage() {
               Admin chatbot
             </button>
             <button
-              onClick={handleLogout}
-              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 border border-rose-300/40 bg-rose-500/10 text-rose-100 hover:bg-rose-500/20 transition"
+              onClick={() => router.push("/admin-login")}
+              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 border border-white/10 bg-white/5 text-sm hover:bg-white/10 transition"
             >
-              <LogOut className="w-4 h-4" />
-              Sign out
+              <ShieldCheck className="w-4 h-4" />
+              Account
             </button>
           </div>
         </div>
